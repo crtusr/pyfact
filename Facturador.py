@@ -13,11 +13,39 @@ import math
 import os
 import sys
 import pdfplumber
-
-"""para la cotizacion del dolar"""
+import subprocess
+import dbf
+import shutil
+import config
 
 import requests
 from bs4 import BeautifulSoup
+
+
+class app_state:
+    __slots__ = ("PRECIOB_var", "precio_bonificado_var", "precio_iva_var", "TAMAÑO_var", "numero_var", "acreedor_var", "deudor_var", "acreedor_deudor_var", "existencias_var", "codigo_var", "efectivo_var", "cheque_var", "CUIT_var", "numero_fila_var", "dolar_var", "dolar_pag")
+
+    def __init__(self):
+        self.PRECIOB_var = tk.StringVar()
+        self.precio_bonificado_var = tk.IntVar()
+        self.precio_iva_var = tk.IntVar()
+        self.TAMAÑO_var = tk.StringVar()
+        self.numero_var = tk.StringVar()
+        self.acreedor_var = tk.StringVar()
+        self.deudor_var = tk.StringVar()
+        self.acreedor_deudor_var = tk.StringVar()
+        self.existencias_var = tk.StringVar()
+        self.codigo_var = tk.StringVar()
+        self.efectivo_var = tk.StringVar()
+        self.cheque_var = tk.StringVar()
+        self.CUIT_var = tk.StringVar()
+        self.numero_fila_var = tk.IntVar()
+        self.dolar_var = tk.StringVar(value="0.0")
+        self.dolar_pag = tk.StringVar(value="0.0")
+
+
+"""para la cotizacion del dolar"""
+
 
 window = tk.Tk()
 
@@ -45,9 +73,19 @@ numero_fila_var = tk.IntVar()
 dolar_var = tk.StringVar(value="0.0")
 dolar_pag = tk.StringVar(value="0.0")
 
+
+def public_price(price):
+    return float(math.ceil((float(price) * config.recargo) /
+                           config.redondeo) * config.redondeo)
+
+
+def add_IVA(price):
+    return (float(price*config.redondeo) * config.IVA)/config.redondeo
+
+
 def buscar_valor():
     """Busca los valores de compra y venta del dólar blue."""
-    #url = "https://dolarhoy.com/cotizaciondolarblue"
+    # url = "https://dolarhoy.com/cotizaciondolarblue"
     url = "https://dolarhoy.com"
 
     try:
@@ -63,37 +101,43 @@ def buscar_valor():
             compra = compra_div.text.strip()
             venta = venta_divs[1].text.strip()
 
-            # Limpiar y convertir a números (reemplazar ',' por '.' y eliminar '$')
-            compra = float(compra.replace('$', '').replace(',', '.'))
-            venta = float(venta.replace('$', '').replace(',', '.'))
+            # compra = float(compra.replace('$', '').replace(',', '.'))
+            # venta = float(venta.replace('$', '').replace(',', '.'))
+
+            spanish_price = str.maketrans({'$': None, '.': None, ',': '.'})
+
+            compra = float(compra.translate(spanish_price))
+            venta = float(venta.translate(spanish_price))
 
             promedio = (compra + venta) / 2
 
             dolar_var.set(promedio)
 
             saldot = calcular_total() / promedio
-            
-            
-            messagebox.showinfo("Resultado", f"Compra: {compra}\nVenta: {venta}\nPromedio: {promedio}\n\n A pagar: {saldot}")
+            messagebox.showinfo("Resultado", f"Compra: {compra}\nVenta:" +
+                                f" {venta}\nPromedio: {promedio}\n\n" +
+                                f" A pagar: {saldot}")
         else:
-            messagebox.showinfo("Resultado", "No se pudieron obtener los valores de compra y venta.")
+            messagebox.showinfo("Resultado", "No se pudieron obtener los" +
+                                " valores de compra y venta.")
 
     except requests.exceptions.RequestException as e:
         messagebox.showerror("Error", f"Error al acceder a la URL: {e}")
     except ValueError as e:
-        messagebox.showerror("Error", f"Error al convertir valores a números: {e}")  #Maneja errores de conversión
+        messagebox.showerror("Error",
+                             f"Error al convertir valores a números: {e}")
     except Exception as e:
         messagebox.showerror("Error", f"Error inesperado: {e}")
 
 
-
 def extract_first_page_from_pdf(pdf_path, txt_path):
-   with pdfplumber.open(pdf_path) as pdf:
-       first_page = pdf.pages[0]
-       text = first_page.extract_text()
-       text += '\n\n' # Agrega dos saltos de línea al final del texto
-       with open(txt_path, 'a') as txt_file:
-           txt_file.write(text)
+    with pdfplumber.open(pdf_path) as pdf:
+        first_page = pdf.pages[0]
+        text = first_page.extract_text()
+        text += '\n\n'  # Agrega dos saltos de línea al final del texto
+        with open(txt_path, 'a') as txt_file:
+            txt_file.write(text)
+
 
 def reset_program():
     producto_entry.delete(0, 'end')
@@ -122,33 +166,37 @@ def reset_program():
 
     calcular_total()
 
+
 reset_button = tk.Button(window, text="Nueva boleta", command=reset_program)
 reset_button.grid(row=0, column=5)
 
+
 def update_price(*args):
     if var.get():
-        # Aumenta el precio en un 30% y redondea hacia arriba a las decenas más cercanas
-        new_price = math.ceil((float(precio_entry.get()) * 1.3) / 10.0) * 10
+        new_price = public_price(float(precio_entry.get()))
         precio_entry.delete(0, tk.END)
         print(str(new_price))
         precio_entry.insert(0, str(new_price))
 
+
 def autocomplete(event=None):
-    current_text = producto_entry.get().lower()
-    suggestions = [row for row in stock if current_text in row['NOMBRE'].lower()]
+    search = producto_entry.get().lower()
+    suggestions = [row for row in stock if search in row['NOMBRE'].lower()]
     if suggestions:
         suggestions_sorted = sorted(suggestions, key=lambda row: row['NOMBRE'])
 
         suggestions_with_size_and_price = []
         for row in suggestions_sorted:
-            precio = float(row['PRECIOB'])  # Empezamos con el precio base
+            precio = float(row['PRECIOB'])  # Base price
+            es_publico = precio_bonificado_var.get()
+            tiene_IVA = precio_iva_var.get()
 
-            if precio_bonificado_var.get() == 1 and precio_iva_var.get() == 0:
-                precio = float(math.ceil((precio * 1.3) / 10.0) * 10) 
-            elif precio_iva_var.get() == 1 and precio_bonificado_var.get() == 0:
-                precio = (precio * 1.21)  
-            elif precio_iva_var.get() == 1 and precio_bonificado_var.get() == 1:
-                precio = float(math.ceil((precio * 1.3) / 10.0) * 10) * 1.21
+            if es_publico == 1 and tiene_IVA == 0:
+                precio = public_price(precio)
+            elif tiene_IVA == 1 and es_publico == 0:
+                precio = add_IVA(precio)
+            elif tiene_IVA == 1 and es_publico == 1:
+                precio = add_IVA(public_price(precio))
 
             suggestions_with_size_and_price.append(
                 f"{row['NOMBRE']}--{row['ENVASE']} - ${precio:.2f}"
@@ -157,75 +205,75 @@ def autocomplete(event=None):
         producto_entry['values'] = suggestions_with_size_and_price
 
         # Sugerencias con solo nombre y envase para autocompletar
-        suggestions_with_size = [
-            f"{row['NOMBRE']}--{row['ENVASE']}" 
-            for row in suggestions_sorted
-        ]
+        # suggestions_with_size = [
+        #     f"{row['NOMBRE']}--{row['ENVASE']}"
+        #     for row in suggestions_sorted
+        # ]
+
 
 def autocomplete_cli(event=None):
     cli_text = cliente_entry.get().lower()
     # Now it will also match substrings in the 'RAZON' field
-    suggestions2 = [row for row in clipro if cli_text in row['RAZON'].lower()]
-    if suggestions2:
+    suggestions = [row for row in clipro if cli_text in row['RAZON'].lower()]
+    if suggestions:
         cliente_entry.set('')  # Clear the current content
-        suggestions2_sorted = sorted(suggestions2, key=lambda row: row['RAZON'])  # Sort the suggestions alphabetically
-        cliente_entry['values'] = [row['RAZON'] for row in suggestions2_sorted]  # Set the new values
-        cliente_entry.set(suggestions2_sorted[0]['RAZON'])  # Set the first suggestion as the current value
+        suggestions_sorted = sorted(suggestions, key=lambda row: row['RAZON'])
+        cliente_entry['values'] = [row['RAZON'] for row in suggestions_sorted]
+        cliente_entry.set(suggestions_sorted[0]['RAZON'])
 
 
 def robust_decode(bs):
     '''Intenta decodificar una cadena de bytes utilizando varias
 codificaciones.'''
-    for encoding in ('utf-8', 'latin-1', 'cp1252'):  # Añade aquí más codificaciones si es necesario
+    for encoding in ('utf-8', 'latin-1', 'cp1252'):
         try:
             return bs.decode(encoding)
         except UnicodeDecodeError:
             pass
     raise UnicodeDecodeError('No se pudo decodificar la cadena de bytes')
 
+
 def agregar_producto(event=None):
     try:
         global precio
         numero_fila = numero_fila_var.get()
         codigo_producto = codigo_var.get()
-        
+
         # Obtener el valor de cantidad como float
         cantidad = float(cantidad_entry.get())
-        
+
         # Determinar si la cantidad a mostrar debe ser int o float
         if cantidad.is_integer():
             cantidad_a_mostrar = int(cantidad)
         else:
             cantidad_a_mostrar = cantidad
-            
+
         producto = producto_entry.get()
         tamaño = tamaño_entry.get()
         precio = float(precio_entry.get())
-        
-        # El cálculo se sigue haciendo con el float original para mantener la precisión
+
         total_producto = cantidad * precio
 
-        # Opcional: Formatear también el total para un aspecto consistente
         if total_producto.is_integer():
             total_a_mostrar = int(total_producto)
         else:
-            total_a_mostrar = round(total_producto, 2) # Redondear a 2 decimales por si acaso
+            total_a_mostrar = round(total_producto, 2)
 
         numero_fila = int(numero_fila) + 1
         numero_fila_var.set(numero_fila)
-        
+
         # Insertar los valores con el formato deseado en el Treeview
         factura_treeview.insert('', 'end', values=(
-            numero_fila, 
-            codigo_producto, 
-            producto, 
-            tamaño, 
-            cantidad_a_mostrar,  # Usar la variable formateada
-            precio, 
-            total_a_mostrar,     # Usar la variable formateada
+            numero_fila,
+            codigo_producto,
+            producto,
+            tamaño,
+            cantidad_a_mostrar,  # Formatted var
+            precio,
+            total_a_mostrar,     # Formatted var
             numero_fila
         ))
-        
+
         calcular_total()
         precio_entry.delete(0, tk.END)
         existencia_entry.delete(0, tk.END)
@@ -235,6 +283,14 @@ def agregar_producto(event=None):
         producto_entry.focus_set()
     except ValueError:
         messagebox.showerror("Error", "Por favor, introduce un número válido")
+
+
+def cantidad_de_plantas():
+    total = 0
+    for child in factura_treeview.get_children():
+        total += float(factura_treeview.item(child, 'values')[4])
+    return total
+
 
 def calcular_total():
     total = 0.0
@@ -251,20 +307,21 @@ def calcular_total():
     total_label.config(text=f"Subtotal: {total}")
     totalisimo = round(float(total) - float(saldo), 2)
     totalisimo_label.config(text=f"Total: {totalisimo}")
-    dolprom = dolar_var.get() # get the average of the current U$D to ARS rate 
-    pagod = dolar_pag.get() # Added for using U$D currency
+    dolprom = dolar_var.get()  # get the average of the current U$D to ARS rate
+    pagod = dolar_pag.get()  # Added for using U$D currency
     pagod = '0' if pagod == '' else pagod
-    pagodars = float(dolprom) * float(pagod) # convert to ARS
-    pagoe = efectivo_var.get() # Get value from efectivo_var
-    pagoch = cheque_var.get() # Get value from cheque_var
+    pagodars = float(dolprom) * float(pagod)  # convert to ARS
+    pagoe = efectivo_var.get()  # Get value from efectivo_var
+    pagoch = cheque_var.get()  # Get value from cheque_var
     pagoe = '0' if pagoe == '' else pagoe
     pagoch = '0' if pagoch == '' else pagoch
     pagodars = '0' if pagodars == '' else pagodars
-    pagot = float(pagoe) + float (pagoch) + float (pagodars)
+    pagot = float(pagoe) + float(pagoch) + float(pagodars)
     saldot = round(-float(totalisimo) + float(pagot), 2)
     saldo_final_label.config(text=f"Saldo final: {saldot}")
     return totalisimo
-    
+
+
 def borrar_fila(event):
     selected = factura_treeview.selection()  # Obtener los items seleccionados
     numero_fila = numero_fila_var.get()
@@ -274,10 +331,6 @@ def borrar_fila(event):
         factura_treeview.delete(item)  # Eliminar el item del Treeview
     calcular_total()
 
-
-import subprocess
-
-import dbf
 
 def actualizar_stock():
     print("Ejecutando actualizar_stock")
@@ -291,38 +344,36 @@ def actualizar_stock():
             stock_updates[codigo] -= cantidad
         else:
             stock_updates[codigo] = -cantidad
-            
-    dbfpath = 'STOCK1.DBF' 
-    table = dbf.Table(dbfpath) 
-    with table:  
+
+    dbfpath = 'STOCK1.DBF'
+    table = dbf.Table(dbfpath)
+    with table:
         for record in table:
             codigo = record['CODIGO'].strip()
             if codigo in stock_updates:
                 # Usar with para modificar el registro
                 with record as r:
                     r['EXISTENCIA'] = r['EXISTENCIA'] + stock_updates[codigo]
-                
+
+
 def create_and_print_invoice():
     campo_escrito = acreedor_deudor_var.get()
     if not campo_escrito or '0.0' in campo_escrito:
         update_client()
 
-    output_folder = r"C:\Users\OEM\Documents\BOLETAS" 
-    
     # Check if folder exists, if not, create it
-    if not os.path.exists(output_folder):
-        os.makedirs(output_folder)
+    if not os.path.exists(config.output_folder):
+        os.makedirs(config.output_folder)
 
     pdf_name = cliente_entry.get() + " " + "PX" + boleta_entry.get() + ".pdf"
     # Combine folder and filename
-    pdf_path = os.path.join(output_folder, pdf_name)
+    pdf_path = os.path.join(config.output_folder, pdf_name)
     # Crear un nuevo PDF con el tamaño de página A4
 
-    
     c = canvas.Canvas(pdf_path, pagesize=A4)
 
     # Calcular los márgenes para centrar el A6 dentro del A4
-    top_margin = A4[1] - A6[1]  # Margen superior para alinear con el borde de A4
+    # top_margin = A4[1] - A6[1]  # para alinear con el borde de A4
     left_margin = (A4[0] - A6[0]) / 2  # Margen izquierdo para centrar
 
     # Configurar la fuente
@@ -332,7 +383,8 @@ def create_and_print_invoice():
     y = A6[1] + 400
 
     c.drawRightString(left_margin + 280, y, "PX" + str(boleta_entry.get()))
-    c.drawString(left_margin + 10, y, "Cliente: " + str(cliente_entry.get()) + " " + str(numero_entry.get()))
+    c.drawString(left_margin + 10, y, "Cliente: " + str(cliente_entry.get()) +
+                 " " + str(numero_entry.get()))
 
     y -= 20
 
@@ -362,8 +414,10 @@ def create_and_print_invoice():
         # Imprimir los valores en el PDF
         c.drawString(left_margin + 10, y, str(values[2]))       # Producto
         c.drawRightString(left_margin + 190, y, str(values[4]))  # Cantidad
-        c.drawRightString(left_margin + 230, y, "{:.2f}".format(float(values[5])))  # Precio
-        c.drawRightString(left_margin + 280, y, "{:.2f}".format(float(values[6])))  # Total
+        c.drawRightString(left_margin + 230, y, "{:.2f}".format(
+                                                float(values[5])))  # Precio
+        c.drawRightString(left_margin + 280, y, "{:.2f}".format(
+                                                float(values[6])))  # Total
 
         # Sumar el valor a la variable suma
         suma += float(values[6])
@@ -375,31 +429,51 @@ def create_and_print_invoice():
         if y < A6[1] + 70:
             # Imprimir la suma de los valores en el final de la página
             if page_number > 1:
-                y -=7
-                c.drawRightString(left_margin + 280, y, "Suma de la pagina: {:.2f}".format(suma))
+                y -= 7
+                c.drawRightString(
+                        left_margin + 280,
+                        y,
+                        "Suma de la pagina: {:.2f}".format(suma))
                 y -= 13
-                c.drawRightString(left_margin + 280, y, "Suma de paginas anteriores: {:.2f}".format(suma_total - suma))
+                c.drawRightString(
+                        left_margin + 280,
+                        y,
+                        "Suma de paginas anteriores: {:.2f}".format(
+                            suma_total - suma))
                 y -= 13
-                c.drawRightString(left_margin + 280, y, "Subtotal: {:.2f}".format(suma_total))
+                c.drawRightString(
+                        left_margin + 280,
+                        y,
+                        "Subtotal: {:.2f}".format(suma_total))
 
             else:
-                y -=7
-                c.drawRightString(left_margin + 280, y, "Suma de la pagina: {:.2f}".format(suma))
+                y -= 7
+                c.drawRightString(
+                        left_margin + 280,
+                        y,
+                        "Suma de la pagina: {:.2f}".format(suma))
 
             c.showPage()
             c.setFont("Helvetica", 9)
             y = A6[1] + 400
 
-            c.drawRightString(left_margin + 280, y, "PX" + str(boleta_entry.get()))
-            c.drawString(left_margin + 10, y, "Cliente: " + str(cliente_entry.get()) + " " + str(numero_entry.get()))
+            c.drawRightString(
+                    left_margin + 280,
+                    y,
+                    "PX" + str(boleta_entry.get()))
+            c.drawString(left_margin + 10, y, "Cliente: " +
+                                              str(cliente_entry.get()) + " " +
+                                              str(numero_entry.get()))
 
             y -= 20
 
             now = datetime.now()
             date_time_str = now.strftime("%d/%m/%Y %H:%M:%S")
-            c.drawString(left_margin + 10, y, "Fecha y hora: " + date_time_str)
+            c.drawString(left_margin + 10, y, "Fecha y hora: " +
+                                              date_time_str)
             page_number += 1
-            c.drawRightString(left_margin + 280, y, "Página: " + str(page_number))
+            c.drawRightString(left_margin + 280, y, "Página: " +
+                                                    str(page_number))
 
             y -= 20
 
@@ -417,22 +491,37 @@ def create_and_print_invoice():
 
             # Imprimir la suma de los valores en el final de la página
             if page_number > 1:
-                y -=7
-                c.drawRightString(left_margin + 280, y, "Suma de la pagina: {:.2f}".format(suma))
+                y -= 7
+                c.drawRightString(
+                        left_margin + 280,
+                        y,
+                        "Suma de la pagina: {:.2f}".format(suma))
                 y -= 13
-                c.drawRightString(left_margin + 280, y, "Suma de paginas anteriores: {:.2f}".format(suma_total - suma))
+                c.drawRightString(
+                        left_margin + 280,
+                        y,
+                        "Suma de paginas anteriores: {:.2f}".format(
+                            suma_total - suma))
                 y -= 13
-                c.drawRightString(left_margin + 280, y, "Subtotal: {:.2f}".format(suma_total))
+                c.drawRightString(
+                        left_margin + 280,
+                        y,
+                        "Subtotal: {:.2f}".format(suma_total))
 
             else:
-                y -=7
-                c.drawRightString(left_margin + 280, y, "Suma de la pagina: {:.2f}".format(suma))
+                y -= 7
+                c.drawRightString(
+                        left_margin + 280,
+                        y,
+                        "Suma de la pagina: {:.2f}".format(suma)
+                )
 
             c.showPage()
             c.setFont("Helvetica", 9)
             y = A6[1] + 400
 
-            c.drawRightString(left_margin + 280, y, "PX" + str(boleta_entry.get()))
+            c.drawRightString(left_margin + 280, y, "PX" +
+                                                    str(boleta_entry.get()))
             c.drawString(left_margin + 10, y, "Cliente: " + str(cliente_entry.get()) + " " + str(numero_entry.get()))
 
             y -= 20
@@ -457,7 +546,7 @@ def create_and_print_invoice():
 
     if page_number > 1:
 
-        y -=7
+        y -= 7
 
         c.drawRightString(left_margin + 280, y, "Suma de la pagina: {:.2f}".format(suma))
 
@@ -470,8 +559,7 @@ def create_and_print_invoice():
     else:
 
         y -= 7
-        
-    
+
     total = total_label.cget("text")  # Obtener el texto del total
     total = total.split(" ")[1]  # Quitar la palabra "Subtotal:"
     c.drawRightString(left_margin + 280, y, "Subtotal: {:.2f}".format(float(total)))  # Imprimir el total
@@ -481,9 +569,9 @@ def create_and_print_invoice():
     saldo = acreedor_deudor_var.get()  # Obtener el texto del saldo
     saldo = '0' if saldo == '' else saldo
     if float(saldo) <= 0.01:
-       c.drawRightString(left_margin + 280, y, "Debe anterior: {:.2f}".format(float(saldo)))  # Imprimir el saldo
+        c.drawRightString(left_margin + 280, y, "Debe anterior: {:.2f}".format(float(saldo)))  # Imprimir el saldo
     else:
-       c.drawRightString(left_margin + 280, y, "A favor anterior: {:.2f}".format(float(saldo)))  # Imprimir el saldo
+        c.drawRightString(left_margin + 280, y, "A favor anterior: {:.2f}".format(float(saldo)))  # Imprimir el saldo
 
     pago_ef = efectivo_var.get()  # Obtener el texto del pago en efectivo
     pago_ef = float(0) if pago_ef == '' else pago_ef
@@ -531,18 +619,20 @@ def create_and_print_invoice():
     saldo_fin = saldo_fin.split(" ")[2]  # Quitar la palabra "Total:"
     saldo_fin_float = float(saldo_fin)
     if saldo_fin_float != 0:
-       if saldo_fin_float <= 0:
-          debt = "SALDO FINAL DEUDOR: {:.2f}".format(float(saldo_fin))
-       elif saldo_fin_float > 0:
-          debt = "SALDO FINAL A FAVOR: {:.2f}".format(float(saldo_fin))
-       c.setFont("Helvetica-Bold", 9)
-       c.drawRightString(left_margin + 280, y, debt)
-       c.setFont("Helvetica", 9)
+        if saldo_fin_float <= 0:
+            debt = "SALDO FINAL DEUDOR: {:.2f}".format(float(saldo_fin))
+        elif saldo_fin_float > 0:
+            debt = "SALDO FINAL A FAVOR: {:.2f}".format(float(saldo_fin))
+        c.setFont("Helvetica-Bold", 9)
+        c.drawRightString(left_margin + 280, y, debt)
+        c.setFont("Helvetica", 9)
     else:
         c.setFont("Helvetica", 9)
         c.drawRightString(left_margin + 280, y, "SALDO FINAL: {:.2f}".format(float(saldo_fin)))  # Imprimir el saldo final
 
-    ####### DUPLICADO
+    c.drawString(left_margin + 10, y + 39, "Cantidad de plantas {:.0f}".format(float(cantidad_de_plantas())))
+
+    # DUPLICADO
 
     c.showPage()
 
@@ -596,7 +686,7 @@ def create_and_print_invoice():
         if y < A6[1] + 70:
             # Imprimir la suma de los valores en el final de la página
             if page_number > 1:
-                y -=7
+                y -= 7
                 c.drawRightString(left_margin + 280, y, "Suma de la pagina: {:.2f}".format(suma))
                 y -= 13
                 c.drawRightString(left_margin + 280, y, "Suma de paginas anteriores: {:.2f}".format(suma_total - suma))
@@ -604,7 +694,7 @@ def create_and_print_invoice():
                 c.drawRightString(left_margin + 280, y, "Subtotal: {:.2f}".format(suma_total))
 
             else:
-                y -=7
+                y -= 7
                 c.drawRightString(left_margin + 280, y, "Suma de la pagina: {:.2f}".format(suma))
 
             c.showPage()
@@ -639,7 +729,7 @@ def create_and_print_invoice():
 
             # Imprimir la suma de los valores en el final de la página
             if page_number > 1:
-                y -=7
+                y -= 7
                 c.drawRightString(left_margin + 280, y, "Suma de la pagina: {:.2f}".format(suma))
                 y -= 13
                 c.drawRightString(left_margin + 280, y, "Suma de paginas anteriores: {:.2f}".format(suma_total - suma))
@@ -647,7 +737,7 @@ def create_and_print_invoice():
                 c.drawRightString(left_margin + 280, y, "Subtotal: {:.2f}".format(suma_total))
 
             else:
-                y -=7
+                y -= 7
                 c.drawRightString(left_margin + 280, y, "Suma de la pagina: {:.2f}".format(suma))
 
             c.showPage()
@@ -679,7 +769,7 @@ def create_and_print_invoice():
 
     if page_number > 1:
 
-        y -=7
+        y -= 7
 
         c.drawRightString(left_margin + 280, y, "Suma de la pagina: {:.2f}".format(suma))
 
@@ -692,8 +782,7 @@ def create_and_print_invoice():
     else:
 
         y -= 7
-        
-    
+
     total = total_label.cget("text")  # Obtener el texto del total
     total = total.split(" ")[1]  # Quitar la palabra "Subtotal:"
     c.drawRightString(left_margin + 280, y, "Subtotal: {:.2f}".format(float(total)))  # Imprimir el total
@@ -703,9 +792,9 @@ def create_and_print_invoice():
     saldo = acreedor_deudor_var.get()  # Obtener el texto del saldo
     saldo = '0' if saldo == '' else saldo
     if float(saldo) <= 0.01:
-       c.drawRightString(left_margin + 280, y, "Debe anterior: {:.2f}".format(float(saldo)))  # Imprimir el saldo
+        c.drawRightString(left_margin + 280, y, "Debe anterior: {:.2f}".format(float(saldo)))  # Imprimir el saldo
     else:
-       c.drawRightString(left_margin + 280, y, "A favor anterior: {:.2f}".format(float(saldo)))  # Imprimir el saldo
+        c.drawRightString(left_margin + 280, y, "A favor anterior: {:.2f}".format(float(saldo)))  # Imprimir el saldo
 
     pago_ef = efectivo_var.get()  # Obtener el texto del pago en efectivo
     pago_ef = float(0) if pago_ef == '' else pago_ef
@@ -753,13 +842,13 @@ def create_and_print_invoice():
     saldo_fin = saldo_fin.split(" ")[2]  # Quitar la palabra "Total:"
     saldo_fin_float = float(saldo_fin)
     if saldo_fin_float != 0:
-       if saldo_fin_float <= 0:
-          debt = "SALDO FINAL DEUDOR: {:.2f}".format(float(saldo_fin))
-       elif saldo_fin_float > 0:
-          debt = "SALDO FINAL A FAVOR: {:.2f}".format(float(saldo_fin))
-       c.setFont("Helvetica-Bold", 9)
-       c.drawRightString(left_margin + 280, y, debt)
-       c.setFont("Helvetica", 9)
+        if saldo_fin_float <= 0:
+            debt = "SALDO FINAL DEUDOR: {:.2f}".format(float(saldo_fin))
+        elif saldo_fin_float > 0:
+            debt = "SALDO FINAL A FAVOR: {:.2f}".format(float(saldo_fin))
+        c.setFont("Helvetica-Bold", 9)
+        c.drawRightString(left_margin + 280, y, debt)
+        c.setFont("Helvetica", 9)
     else:
         c.setFont("Helvetica", 9)
         c.drawRightString(left_margin + 280, y, "SALDO FINAL: {:.2f}".format(float(saldo_fin)))  # Imprimir el saldo final
@@ -770,6 +859,7 @@ def create_and_print_invoice():
     extract_first_page_from_pdf(pdf_path, 'boletas.txt')
 
     return pdf_path
+
 
 def print_pdf(pdf_path):
     # Obtiene la impresora predeterminada
@@ -782,25 +872,23 @@ def print_pdf(pdf_path):
 def open_invoice():
     global action
     try:
-        
+
         pdf_path = create_and_print_invoice()
         # Abrir el PDF con el lector de PDF predeterminado
         subprocess.Popen([pdf_path], shell=True)
     except OSError as e:
         # Si el archivo está en uso por otro proceso, se lanzará una excepción OSError.
-        messagebox.showerror("Error al imprimir", 
-                             "No se pudo abrir porque está abierta la boleta en el lector\nde PDF (icono rojo) o esta abierto el programa del vivero")
+        messagebox.showerror("Error al imprimir: {e}",
+                             f"No se pudo abrir porque está abierta la boleta en el lector\nde PDF (icono rojo) o esta abierto el programa del vivero:\n{e}")
     except Exception as e:
         # Capturar cualquier otra excepción inesperada
         messagebox.showerror("Error inesperado", f"Ha ocurrido un error inesperado: {e}")
-
-    
 
 
 def print_invoice():
     global action
     try:
-        
+
         pdf_path = create_and_print_invoice()
 
         # Print the file located at that specific path
@@ -808,16 +896,12 @@ def print_invoice():
 
     except OSError as e:
         # Si el archivo está en uso por otro proceso, se lanzará una excepción OSError.
-        messagebox.showerror("Error al abrir el PDF", 
-                             "No se pudo imprimir porque está abierta la boleta en el lector\nde PDF (icono rojo) o esta abierto el programa del vivero")
+        messagebox.showerror("Error al abrir el PDF",
+                             f"No se pudo imprimir porque está abierta la boleta en el lector\nde PDF (icono rojo) o esta abierto el programa del vivero:\n{e}")
     except Exception as e:
         # Capturar cualquier otra excepción inesperada
         messagebox.showerror("Error inesperado", f"Ha ocurrido un error inesperado: {e}")
 
-    
-import os
-import shutil
-from dbfread import DBF
 
 current_dir = os.path.dirname(os.path.realpath(__file__))
 
@@ -846,8 +930,10 @@ cliente_label.grid(row=0, column=3)
 
 cliente_var = tk.StringVar()  # Create a StringVar instance
 
+
 def update_title(*args):  # Function to update window title
     window.title(cliente_var.get())
+
 
 cliente_var.trace('w', update_title)
 
@@ -898,9 +984,13 @@ tamaño_entry = tk.Entry(window, textvariable=TAMAÑO_var)
 tamaño_entry.configure(font=('Arial', 13))
 tamaño_entry.grid(row=5, column=3)
 
+
 def update_client():
     # Obtiene el producto seleccionado
     selected_client = cliente_var.get()
+    if selected_client == '':
+        numero_var.set('999')
+        return
 
     # Busca el producto seleccionado en el stock y actualiza el precio
     for row in clipro:
@@ -909,8 +999,11 @@ def update_client():
             acreedor_var.set(row['ACREEDOR'])
             deudor_var.set(row['DEUDOR'])
             CUIT_var.set(row['NCUIT'])
-            acreedor_deudor_var.set( round( float( acreedor_var.get() ) - float( deudor_var.get() ), 2 ) ) #esperemos que esto lo arregle
+            acreedor_deudor_var.set(round(float(acreedor_var.get()) - float(deudor_var.get()), 2))
             break
+    else:
+        numero_var.set('999')
+
 
 def on_product_selection(event):
     campo_escrito = acreedor_deudor_var.get()
@@ -929,13 +1022,13 @@ def on_product_selection(event):
         if row['NOMBRE'] == selected_name and row['ENVASE'] == selected_size:
             precio_original = float(row['PRECIOB'])
             precio = precio_original
-            # print(f"precio_original: {precio_original}")  # Impresión de depuración
+            # print(f"precio_original: {precio_original}")  # depuración
             if precio_bonificado_var.get() == 1:
-                precio = float(math.ceil((float(precio_original) * 1.3) / 10.0) * 10)  # Aumenta el precio en un 30% y redondea a la decena más cercana
+                precio = public_price(precio_original)
             if precio_iva_var.get() == 1:
-                precio = (float(precio_original*100) * 1.21)/100 # Aumenta el precio en un 21%
+                precio = add_IVA(precio_original)
             if precio_iva_var.get() == 1 and precio_bonificado_var.get() == 1:
-                precio = (float(math.ceil((float(precio_original) * 1.3) / 10.0) * 10) * 121) / 100  # Aumenta el precio en un 30% y redondea a la decena más cercana
+                precio = public_price(add_IVA(precio_original))
             PRECIOB_var.set(precio)
             codigo_var.set(row['CODIGO'])
             existencias_var.set(row['EXISTENCIA'])
@@ -943,19 +1036,20 @@ def on_product_selection(event):
             break
     cantidad_entry.focus_set()
 
+
 def on_checkbox_change():
     global precio
     if precio_bonificado_var.get() == 1 and precio_iva_var.get() == 0:
-        precio = float(math.ceil((float(precio_original) * 1.3) / 10.0) * 10)  # Aumenta el precio en un 30% y redondea a la decena más cercana
+        precio = public_price(precio_original)
     elif precio_iva_var.get() == 1 and precio_bonificado_var.get() == 0:
-         #precio = float(precio_original) * 1.21
-        precio = (float(precio_original*100) * 1.21)/100 # Aumenta el precio en un 21%  # Aumenta el precio en un 30% y redondea a la decena más cercana
+        precio = add_IVA(precio_original)
     elif precio_iva_var.get() == 1 and precio_bonificado_var.get() == 1:
-        precio = float(math.ceil((float(precio_original) * 1.3) / 10.0) * 10) * 1.21  # Aumenta el precio en un 30% y redondea a la decena más cercana
+        precio = add_IVA(public_price(precio_original))
     else:
         precio = precio_original  # Restaura el precio original
     # print(f"precio: {precio}")  # Impresión de depuración
     PRECIOB_var.set(precio)
+
 
 # Vincula el evento de selección de la lista de sugerencias a la función on_product_selection
 producto_entry.bind('<<ComboboxSelected>>', on_product_selection)
@@ -976,17 +1070,21 @@ precio_entry = tk.Entry(window, textvariable=PRECIOB_var)
 precio_entry.configure(font=('Arial', 13))
 precio_entry.grid(row=5, column=4)
 
-checkbox = tk.Checkbutton(window, text='Publico',
-variable=precio_bonificado_var, command=on_checkbox_change)
+checkbox = tk.Checkbutton(window,
+                          text='Publico',
+                          variable=precio_bonificado_var,
+                          command=on_checkbox_change)
 checkbox.grid(row=5, column=5)
 
-checkboxiva = tk.Checkbutton(window, text='IVA',
-variable=precio_iva_var, command=on_checkbox_change)
+checkboxiva = tk.Checkbutton(window,
+                             text='IVA',
+                             variable=precio_iva_var,
+                             command=on_checkbox_change)
 checkboxiva.grid(row=6, column=5)
 
 acreedor_deudor_label = tk.Label(window, text="Saldo anterior")
 acreedor_deudor_label.grid(row=9, column=4)
-acreedor_deudor_entry = tk.Entry(window, textvariable=acreedor_deudor_var) #Have to round the value to 2 decimal places
+acreedor_deudor_entry = tk.Entry(window, textvariable=acreedor_deudor_var)
 acreedor_deudor_entry.configure(font=('Arial', 13))
 acreedor_deudor_var.trace("w", lambda name, index, mode, sv=acreedor_deudor_var: calcular_total())
 acreedor_deudor_entry.grid(row=10, column=4)
@@ -1016,9 +1114,10 @@ def on_client_selection(event):
             acreedor_var.set(row['ACREEDOR'])
             deudor_var.set(row['DEUDOR'])
             CUIT_var.set(row['NCUIT'])
-            acreedor_deudor_var.set( round( float(acreedor_var.get()) - float(deudor_var.get()), 2) )
+            acreedor_deudor_var.set(round(float(acreedor_var.get()) - float(deudor_var.get()), 2))
             break
     producto_entry.focus_set()
+
 
 # Vincula el evento de selección de la lista de sugerencias a la función on_product_selection
 cliente_entry.bind('<<ComboboxSelected>>', on_client_selection)
@@ -1037,7 +1136,7 @@ factura_treeview.column('Tamaño', width=100)
 factura_treeview.column('Cantidad', width=150)
 factura_treeview.column('Precio', width=150)
 factura_treeview.column('Total', width=150)
-factura_treeview.column('Fila', width=40) 
+factura_treeview.column('Fila', width=40)
 factura_treeview.heading('Fila', text='Fila')
 factura_treeview.heading('Codigo', text='Codigo')
 factura_treeview.heading('Producto', text='Producto')
@@ -1056,6 +1155,7 @@ scrollbar.grid(row=11, column=7, sticky="ns")
 
 window.grid_rowconfigure(11, weight=1)
 window.grid_columnconfigure(3, weight=1)
+
 
 def editar_fila(event):
     """Opens a popup for editing the selected row."""
@@ -1088,7 +1188,7 @@ def editar_fila(event):
             new_tamaño = entries[3].get()
             new_cantidad = entries[4].get()
             new_precio = entries[5].get()
-            
+
             # Calculate total and fila
             new_total = str(float(new_cantidad) * float(new_precio))
 
@@ -1099,6 +1199,7 @@ def editar_fila(event):
 
         update_button = ttk.Button(popup, text="Actualizar", command=update_row)
         update_button.grid(row=6, column=0, columnspan=2, pady=10)
+
 
 # Bind double-click to edit row
 factura_treeview.bind('<Double-Button-1>', editar_fila)

@@ -1,0 +1,14 @@
+*.txt
+*.DBF
+*.DBT
+*.INDEX
+*.bat
+*.txt
+*.NTX
+*.xlsx
+*.c~
+*.exe
+*.un~
+*.DBF.bak
+*.md
+__pycache__/
