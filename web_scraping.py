@@ -36,7 +36,7 @@ def buscar_valor(ui_context, state):
 
             saldot = logic.calcular_total(ui_context, state) / promedio
             ui.show_message(
-                    "Resultado"
+                    "Resultado",
                     f"Compra: {compra}\nVenta:" +
                     f" {venta}\nPromedio: {promedio}\n" +
                     f"\n A pagar: {saldot}")

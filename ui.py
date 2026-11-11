@@ -239,9 +239,9 @@ def reset_program(ui, state):
     logic.calcular_total(ui, state)
 
 
-def autocomplete(ui, data, state, event=None):
-    srch = ui.producto_entry.get().lower()
-    suggestions = [row for row in data.stock if srch in row['NOMBRE'].lower()]
+def autocomplete(producto_entry, stock, state, event=None):
+    srch = producto_entry.get().lower()
+    suggestions = [row for row in stock if srch in row['NOMBRE'].lower()]
     if suggestions:
         suggestions_sorted = sorted(suggestions, key=lambda row: row['NOMBRE'])
 
@@ -262,7 +262,7 @@ def autocomplete(ui, data, state, event=None):
                 f"{row['NOMBRE']}--{row['ENVASE']} - ${precio:.2f}"
             )
 
-        ui.producto_entry['values'] = suggestions_with_size_and_price
+        producto_entry['values'] = suggestions_with_size_and_price
 
         # Sugerencias con solo nombre y envase para autocompletar
         # suggestions_with_size = [
@@ -271,18 +271,28 @@ def autocomplete(ui, data, state, event=None):
         # ]
 
 
-def autocomplete_cli(ui, data, event=None):
-    cli = ui.cliente_entry.get().lower()
+def autocomplete_cli(cli_entry, clipro, fields, event=None):
+    cp = cli_entry.get().lower()
     # Now it will also match substrings in the 'RAZON' field
-    suggestions = [row for row in data.clipro if cli in row['RAZON'].lower()]
+    suggestions = [row for row in clipro if cp in row[fields['razon']].lower()]
     if suggestions:
-        ui.cliente_entry.set('')  # Clear the current content
+        cli_entry.set('')  # Clear the current content
         suggestions_sorted = sorted(
                 suggestions,
-                key=lambda row: row['RAZON'])
-        ui.cliente_entry['values'] = [row['RAZON'] for row in
-                                      suggestions_sorted]
-        ui.cliente_entry.set(suggestions_sorted[0]['RAZON'])
+                key=lambda row: row[fields['razon']])
+        cli_entry['values'] = [
+                row[fields['razon']]
+                for row
+                in suggestions_sorted]
+        cli_entry.set(suggestions_sorted[0][fields['razon']])
+
+
+def get_entries_for_billing(ui):
+    products = []
+    for index in ui.factura_treeview.get_children():
+        elem = ui.factura_treeview.item(index, 'values')
+        products.append([elem[2], elem[4], elem[5]])
+    return products
 
 
 def get_prod_entries_row(ui, index):
@@ -314,7 +324,7 @@ def update_bill_sum(ui, totales):
 
 def agregar_producto(ui, state, event=None):
     try:
-        global precio
+        #   global precio
         numero_fila = ui.numero_fila_var.get()
         codigo_producto = state.codigo_var.get()
 
@@ -375,6 +385,10 @@ def borrar_fila(ui, state, event):
 
 
 def show_message(title, message):
+    messagebox.showinfo(title, message)
+
+
+def show_error(title, message):
     messagebox.showerror(title, message)
 
 
@@ -420,7 +434,7 @@ def print_invoice(ui, state, data):
 
         campo_escrito = state.acreedor_deudor_var.get()
         if not campo_escrito or '0.0' in campo_escrito:
-            update_client()
+            update_client(state)
         # Print the file located at that specific path
         os.startfile(pdf_path, "print")
 
@@ -439,8 +453,8 @@ def print_invoice(ui, state, data):
                 f"Ha ocurrido un error inesperado: {e}")
 
 
-def update_title(window, state, *args):  # Function to update window title
-    window.title(state.cliente_var.get())
+def update_title(window, current_title, *args):
+    window.title(current_title)
 
 
 def cantidad_de_plantas(ui):
@@ -450,7 +464,7 @@ def cantidad_de_plantas(ui):
     return total
 
 
-def on_product_selection(state, ui, data, event):
+def on_product_selection(state, ui, stock, event):
     campo_escrito = state.acreedor_deudor_var.get()
     if not campo_escrito or '0.0' in campo_escrito:
         update_client(state)
@@ -460,7 +474,7 @@ def on_product_selection(state, ui, data, event):
 
     selected_name, selected_size = selected_product.split('--', 1)
 
-    for row in data.stock:
+    for row in stock:
         if row['NOMBRE'] == selected_name and row['ENVASE'] == selected_size:
             state.precio_original = float(row['PRECIOB'])
             precio = logic.decide_price(
@@ -481,21 +495,19 @@ def on_checkbox_change(state):
             state.precio_original,
             state.precio_bonificado_var.get(),
             state.precio_iva_var.get())
-    # print(f"precio: {precio}")  # Impresión de depuración
+    # print(f"precio: {precio}")  # debug print
     state.PRECIOB_var.set(precio)
 
 
 def on_client_selection(ui, state, data, event):
-    # Obtiene el producto seleccionado
     selected_client = ui.cliente_entry.get()
 
-    # Busca el producto seleccionado en el stock y actualiza el precio
     for row in data.clipro:
-        if row['RAZON'] == selected_client:
-            state.numero_var.set(row['NUMERO'])
-            state.acreedor_var.set(row['ACREEDOR'])
-            state.deudor_var.set(row['DEUDOR'])
-            state.CUIT_var.set(row['NCUIT'])
+        if row[data.fields['razon']] == selected_client:
+            state.numero_var.set(row[data.fields['numero']])
+            state.acreedor_var.set(row[data.fields['acreedor']])
+            state.deudor_var.set(row[data.fields['deudor']])
+            state.CUIT_var.set(row[data.fields['ncuit']])
             state.acreedor_deudor_var.set(round(
                 float(state.acreedor_var.get()) -
                 float(state.deudor_var.get()),
@@ -536,12 +548,15 @@ def init(data):
     ui.cliente_label.grid(row=0, column=3)
     state.cliente_var.trace(
             'w',
-            lambda *args: update_title(window, state, *args))
+            lambda *args: update_title(window, state.cliente_var.get(), *args))
 
     ui.cliente_entry = ttk.Combobox(
             window,
             textvariable=state.cliente_var,
-            postcommand=lambda: autocomplete_cli(ui, data))
+            postcommand=lambda: autocomplete_cli(
+                ui.cliente_entry,
+                data.clipro,
+                data.fields))
     ui.cliente_entry.configure(font=('Arial', 13))
     ui.cliente_entry.grid(row=1, column=3)
 
@@ -573,7 +588,10 @@ def init(data):
     ui.producto_label.grid(row=2, column=3)
     ui.producto_entry = ttk.Combobox(
             window,
-            postcommand=lambda: autocomplete(ui, data, state),
+            postcommand=lambda: autocomplete(
+                ui.producto_entry,
+                data.stock,
+                state),
             width=75)
     ui.producto_entry.configure(font=('Arial', 13))
     ui.producto_entry.grid(row=3, column=2, columnspan=3)
@@ -591,7 +609,7 @@ def init(data):
     ui.tamaño_entry.grid(row=5, column=3)
     ui.producto_entry.bind(
             '<<ComboboxSelected>>',
-            lambda event: on_product_selection(state, ui, data, event))
+            lambda event: on_product_selection(state, ui, data.stock, event))
 
     ui.cantidad_label = tk.Label(window, text="Cantidad")
     ui.cantidad_label.grid(row=6, column=3)
@@ -700,7 +718,9 @@ def init(data):
             command=ui.factura_treeview.yview)
     ui.scrollbar.grid(row=11, column=7, sticky="ns")
     ui.factura_treeview.configure(yscrollcommand=ui.scrollbar.set)
-    ui.factura_treeview.bind('<Delete>', borrar_fila)
+    ui.factura_treeview.bind(
+            '<Delete>',
+            lambda event: borrar_fila(ui, state, event))
 
     ui.factura_treeview.grid(row=11, column=0, columnspan=6, sticky="nsew")
     ui.scrollbar.grid(row=11, column=7, sticky="ns")

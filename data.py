@@ -10,14 +10,13 @@ import ui
 class tables:
     stock: list
     clipro: list
-    prove: list
+    fields: dict
 
 
-def init_tables():
+def init_tables(cli_pro, fields):
     files = {
             'stock': 'STOCK1.DBF',
-            'clipro': 'CLIPRO.DBF',
-            'prove': 'PROVE.DBF'}
+            'clipro': cli_pro}
 
     data = {}
 
@@ -34,7 +33,9 @@ def init_tables():
         # Ahora que el objeto DBF está cerrado, se puede copiar el archivo
         shutil.copyfile(original_path, temp_path)
 
-    return tables(**data)
+    data['fields'] = fields
+
+    return tables(**data)  # Should look up the meaning of **data in python
 
 
 def actualizar_stock(data, ui_context):
